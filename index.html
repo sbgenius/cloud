@@ -572,12 +572,12 @@ const dk=ms=>{const d=new Date(ms);return d.getFullYear()+'-'+String(d.getMonth(
 const slim=p=>({tag:p.tag,r:p.r,f:p.f,th:p.th,m:p.m});
 const VCH=24*1048576,MAXV=1024*1048576,isVidF=f=>f.type.startsWith('video/'),isVid=p=>!!(p.m.t&&p.m.t.startsWith('video/')),
   fdur=s=>{s=Math.round(s||0);return s?Math.floor(s/60)+':'+String(s%60).padStart(2,'0'):''};
-const BATCH=50,COMPACT_SEGS=60,COMPACT_DEL=500,CHUNK=20000;
+const BATCH=50,COMPACT_FSEGS=8,CHUNK=20000;
 async function apiR(p,o,up){for(let i=0;;i++){const r=await api(p,o,up);if(r.status===401)toast('GitHub rejected your token. Click the key icon to replace it.',8000);if(i>=3||(r.status!==403&&r.status!==429&&r.status<500))return r;await sleep(1500*2**i)}}
 const gz=async(u8,c)=>new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(c?new CompressionStream('gzip'):new DecompressionStream('gzip'))).arrayBuffer());
 const packB=async o=>seal(S.key,await gz(enc.encode(JSON.stringify(o)),1));
 const unpackB=async b=>JSON.parse(dec.decode(await gz(new Uint8Array(await unseal(S.key,b)),0)));
-let ROOT=null,IDXREL=0,tq=Promise.resolve(),days=[],shown=0,usedPx=0,ENT=new Map(),ALL=[],ALB={},DENT=new Map(),DALL=[];
+let ROOT=null,IDXREL=0,tq=Promise.resolve(),days=[],shown=0,usedPx=0,ENT=new Map(),ALL=[],ALBT={},MONTHS=[],MLOAD=0,PGEN=0,mq=null,NEEDMO=new Set(),DENT=new Map(),PHOK=false;
 const norm=o=>(o.dsegs=o.dsegs||[],o.ddel=o.ddel||[],o.dfold=o.dfold||{},o);
 const det=$('detail'),SEGC=new Map(),ALBC=new Map(),PACK=new Map(),key=x=>x.r+'/'+x.a;
 const cached=(M,k,f)=>{if(!M.has(k))M.set(k,f().catch(e=>{M.delete(k);throw e}));return M.get(k)};
@@ -599,14 +599,52 @@ async function ensureIdx(){const r=await findIdx();if(r){IDXREL=r.id;return}
   if(!c.ok)throw Error('Could not create the index');IDXREL=(await c.json()).id}
 const dropAsset=id=>{apiR(`${repo()}/releases/assets/${id}`,{method:'DELETE'}).catch(()=>{})};
 
-/* in-memory view of the library, rebuilt from cached segments */
-async function refresh(root){
-  norm(root);const dss=await Promise.all(root.dsegs.map(getSeg)),dm=new Map();dss.forEach(a=>a.forEach(e=>dm.set(e.tag,e)));root.ddel.forEach(id=>dm.delete(id));DENT=dm;DALL=[...dm.values()];
-  const segs=await Promise.all(root.segs.map(getSeg)),m=new Map();
-  segs.forEach(a=>a.forEach(e=>m.set(e.tag,e)));root.del.forEach(id=>m.delete(id));
-  const ids=await Promise.all(Object.values(root.albums).map(a=>a.s?getAlb(a.s):[])),al={};
-  Object.keys(root.albums).forEach((id,i)=>al[id]=new Set(ids[i].filter(t=>m.has(t))));
-  ENT=m;ALL=[...m.values()].sort((a,b)=>b.m.d-a.m.d);ALB=al;ROOT=root}
+/* Lazy loading.
+   Drive: the folder tree lives in the root (already downloaded with it), so folders show instantly. File entries are
+   stored in per-folder segments (each segment ref has f = folder id), and a folder's files are fetched only when
+   that folder is opened: one level, never its sub-folders.
+   Photos: the photo index is downloaded only the first time the Photos space is opened. */
+/* Photos are partitioned by month (UTC key). Each segment ref in root.segs carries mo. Only the newest months are
+   downloaded when Photos opens; older months load as you scroll toward them (like a Drive folder). */
+const mk=ms=>new Date(ms).toISOString().slice(0,7),monthOf=e=>mk(e.m.d);
+async function monthMap(root,mo){const arrs=await Promise.all(root.segs.filter(s=>s.mo===mo).map(getSeg)),m=new Map();
+  arrs.forEach(a=>a.forEach(e=>{if(monthOf(e)===mo)m.set(e.tag,e)}));root.del.forEach(id=>m.delete(id));return m}
+function resetPhotos(root){PGEN++;ENT=new Map();ALL=[];ALBT={};MLOAD=0;MONTHS=[...new Set(root.segs.map(s=>s.mo))].sort().reverse()}
+function loadMonth(){if(mq)return mq;const g=PGEN;
+  mq=(async()=>{try{if(MLOAD>=MONTHS.length)return;const m=await monthMap(ROOT,MONTHS[MLOAD]);if(g!==PGEN)return;
+    MLOAD++;m.forEach((e,t)=>ENT.set(t,e));ALL=[...ENT.values()].sort((a,b)=>b.m.d-a.m.d)}finally{mq=null}})();return mq}
+/* after a change: keep the same months loaded (segments are cached, so this costs no downloads) plus any month just touched */
+async function refreshPhotos(root){const n=MLOAD;resetPhotos(root);
+  const need=Math.min(MONTHS.length,Math.max(n,...[...NEEDMO].map(x=>MONTHS.indexOf(x)+1)));NEEDMO.clear();
+  for(let t=0;MLOAD<need&&t<need+3;t++)await loadMonth();PHOK=true}
+async function refresh(root){norm(root);ROOT=root;if(PHOK)await refreshPhotos(root)}
+/* files of ONE drive folder (segments are immutable and cached, so revisiting a folder costs no requests) */
+async function folderMap(root,f){
+  const arrs=await Promise.all(root.dsegs.filter(s=>s.f===f).map(getSeg)),m=new Map();
+  arrs.forEach(a=>a.forEach(e=>m.set(e.tag,e)));root.ddel.forEach(id=>m.delete(id));return m}
+/* replace every segment of one folder with fresh ones holding exactly `es` */
+async function putFolder(root,f,es,old){
+  root.dsegs.filter(s=>s.f===f).forEach(s=>{if(s.r==='idx2'&&s.id)old.push(s.id)});
+  root.dsegs=root.dsegs.filter(s=>s.f!==f);
+  for(let i=0;i<es.length;i+=CHUNK){const part=es.slice(i,i+CHUNK),ref=await putAsset(IDXREL,'dc-'+hex(rand(6)),await packB(part),'idx2');
+    SEGC.set(key(ref),Promise.resolve(part));root.dsegs.push({...ref,n:part.length,f})}}
+/* one-time: libraries saved by the previous version keep drive entries in mixed segments. Download them once and
+   re-save them as one segment per folder. Runs again only if a segment without a folder tag ever shows up. */
+async function organise(root){
+  if(norm(root).dsegs.every(s=>s.f!=null))return root;
+  busy.start('Organising your drive (one-time)…',1);
+  try{
+    await txn(async({root,old})=>{
+      if(root.dsegs.every(s=>s.f!=null))return;
+      const arrs=await Promise.all(root.dsegs.map(getSeg)),m=new Map();
+      arrs.forEach(a=>a.forEach(e=>m.set(e.tag,e)));root.ddel.forEach(id=>m.delete(id));
+      const by=new Map();m.forEach(e=>{const p=e.m.p||'';if(!by.has(p))by.set(p,[]);by.get(p).push(e)});
+      const out=[];
+      for(const[f,es]of by)for(let i=0;i<es.length;i+=CHUNK){const part=es.slice(i,i+CHUNK),ref=await putAsset(IDXREL,'dc-'+hex(rand(6)),await packB(part),'idx2');
+        SEGC.set(key(ref),Promise.resolve(part));out.push({...ref,n:part.length,f})}
+      root.dsegs.forEach(x=>{if(x.r==='idx2'&&x.id)old.push(x.id)});root.dsegs=out;root.ddel=[]});
+    return ROOT}
+  finally{busy.end()}}
 
 /* thumbnails come from packs (one download serves many photos); originals are one asset each */
 function thumbUrl(p){return urls[p.tag]||(urls[p.tag]=(async()=>{
@@ -619,26 +657,41 @@ const io=new IntersectionObserver(es=>es.forEach(async e=>{if(!e.isIntersecting)
 function txn(fn){const run=tq.catch(()=>{}).then(()=>doTxn(fn));tq=run;return run}
 async function doTxn(fn){
   const root=(await readRoot())||ROOT,old=[];
-  const ctx={root,old,
+  const touched=new Set(),touchedM=new Set(),ctx={root,old,
     albIds:async id=>{const a=root.albums[id];return a&&a.s?[...await getAlb(a.s)]:[]},
     saveAlb:async(id,ids)=>{const a=root.albums[id];if(!a)throw Error('Album no longer exists');
       if(a.s&&a.s.r==='idx2'&&a.s.id)old.push(a.s.id);ids=[...new Set(ids)];
       a.s=ids.length?await putAsset(IDXREL,'al-'+hex(rand(6)),await packB(ids),'idx2'):null;a.k=ids.length;
       if(a.s)ALBC.set(key(a.s),Promise.resolve(ids))},
-    addSeg:async es=>{const ref=await putAsset(IDXREL,'e-'+hex(rand(6)),await packB(es.map(slim)),'idx2');
-      SEGC.set(key(ref),Promise.resolve(es));root.segs.push({...ref,n:es.length})},
-    addDSeg:async es=>{const ref=await putAsset(IDXREL,'d-'+hex(rand(6)),await packB(es),'idx2');SEGC.set(key(ref),Promise.resolve(es));root.dsegs.push({...ref,n:es.length})}};
+    touchM:mo=>touchedM.add(mo),
+    addSeg:async es=>{const by=new Map();es.forEach(e=>{const k=monthOf(e);if(!by.has(k))by.set(k,[]);by.get(k).push(e)});
+      for(const[mo,part]of by){const sl=part.map(slim),ref=await putAsset(IDXREL,'e-'+hex(rand(6)),await packB(sl),'idx2');
+        SEGC.set(key(ref),Promise.resolve(sl));root.segs.push({...ref,n:sl.length,mo});touchedM.add(mo)}},
+    addDSeg:async es=>{const by=new Map();es.forEach(e=>{const p=e.m.p||'';if(!by.has(p))by.set(p,[]);by.get(p).push(e)});
+      for(const[f,part]of by){const ref=await putAsset(IDXREL,'d-'+hex(rand(6)),await packB(part),'idx2');SEGC.set(key(ref),Promise.resolve(part));root.dsegs.push({...ref,n:part.length,f});touched.add(f)}}};
   const res=await fn(ctx);
-  if(root.segs.length>COMPACT_SEGS||root.del.length>COMPACT_DEL||root.dsegs.length>COMPACT_SEGS||root.ddel.length>COMPACT_DEL)await compact(root,old);
+  for(const mo of touchedM)if(root.segs.filter(s=>s.mo===mo).length>COMPACT_FSEGS)await putMonth(root,mo,[...(await monthMap(root,mo)).values()],old);
+  for(const f of touched)if(root.dsegs.filter(s=>s.f===f).length>COMPACT_FSEGS)await putFolder(root,f,[...(await folderMap(root,f)).values()],old);
   await writeRoot(root);ROOT=root;old.forEach(dropAsset);return res}
-async function compact(root,old){
-  for(const[a,b,fm,pf]of[['segs','del',slim,'c-'],['dsegs','ddel',x=>x,'dc-']]){
-    if(root[a].length<=COMPACT_SEGS&&root[b].length<=COMPACT_DEL)continue;
-    const arrs=await Promise.all(root[a].map(getSeg)),m=new Map();
-    arrs.forEach(x=>x.forEach(e=>m.set(e.tag,e)));root[b].forEach(id=>m.delete(id));
-    const all=[...m.values()].map(fm),out=[];
-    for(let i=0;i<all.length;i+=CHUNK){const part=all.slice(i,i+CHUNK),ref=await putAsset(IDXREL,pf+hex(rand(6)),await packB(part),'idx2');SEGC.set(key(ref),Promise.resolve(part));out.push({...ref,n:part.length})}
-    root[a].forEach(x=>{if(x.r==='idx2'&&x.id)old.push(x.id)});root[a]=out;root[b]=[]}}
+/* replace every segment of one month with fresh ones holding exactly `es` */
+async function putMonth(root,mo,es,old){
+  root.segs.filter(s=>s.mo===mo).forEach(s=>{if(s.r==='idx2'&&s.id)old.push(s.id)});
+  root.segs=root.segs.filter(s=>s.mo!==mo);
+  for(let i=0;i<es.length;i+=CHUNK){const part=es.slice(i,i+CHUNK).map(slim),ref=await putAsset(IDXREL,'e-'+hex(rand(6)),await packB(part),'idx2');
+    SEGC.set(key(ref),Promise.resolve(part));root.segs.push({...ref,n:part.length,mo})}}
+/* one-time: libraries saved by earlier versions keep photos in mixed segments. Re-save them as per-month segments. */
+async function organisePhotos(){
+  if(ROOT.segs.every(s=>s.mo!=null))return;
+  busy.start('Organising your photos (one-time)…',1);
+  try{await txn(async({root,old})=>{
+    if(root.segs.every(s=>s.mo!=null))return;
+    const arrs=await Promise.all(root.segs.map(getSeg)),m=new Map();
+    arrs.forEach(a=>a.forEach(e=>m.set(e.tag,e)));root.del.forEach(id=>m.delete(id));
+    const by=new Map();m.forEach(e=>{const k=monthOf(e);if(!by.has(k))by.set(k,[]);by.get(k).push(e)});
+    root.segs.forEach(s=>{if(s.r==='idx2'&&s.id)old.push(s.id)});root.segs=[];root.del=[];
+    for(const[mo,es]of by)for(let i=0;i<es.length;i+=CHUNK){const part=es.slice(i,i+CHUNK).map(slim),ref=await putAsset(IDXREL,'e-'+hex(rand(6)),await packB(part),'idx2');
+      SEGC.set(key(ref),Promise.resolve(part));root.segs.push({...ref,n:part.length,mo})}})}
+  finally{busy.end()}}
 
 /* one-time import of a v1 library (a release per photo + the old index). Old photos are referenced in place. */
 const legacyBuf=async id=>{const r=await apiR(`${repo()}/releases/assets/${id}`,{headers:{Accept:'application/octet-stream'}});if(!r.ok)throw Error('Could not read the old index');return r.arrayBuffer()};
@@ -662,7 +715,7 @@ async function migrate(){
       root.albums[id]={n:a.n,c:a.c,k:ids.length,s:ids.length?await putAsset(IDXREL,'al-'+hex(rand(6)),await packB(ids),'idx2'):null}}
     await writeRoot(root);return root}
   finally{busy.end()}}
-async function load(){$('st').textContent='Loading…';let r=await readRoot();if(!r)r=await migrate();await refresh(r);view='all';await build()}
+async function load(){$('st').textContent='Loading…';let r=await readRoot();if(!r)r=await migrate();r=await organise(r);await refresh(r);view='all';await build()}
 
 /* ---- dialogs ---- */
 function askName(title,val=''){return new Promise(res=>{const d=$('d-name');$('n-t').textContent=title;$('n-v').value=val;let o=false;
@@ -701,7 +754,9 @@ async function removeFromAlbum(ps){await act(async()=>{const T=new Set(ps.map(p=
 async function deletePhotos(ps){
   if(!await askConfirm(`Delete ${ps.length} photo${ps.length>1?'s':''}?`,'They are removed from your library and all albums. The encrypted files stay in your repo, unreferenced.','Delete'))return false;
   busy.start(`Deleting ${ps.length} photo${ps.length>1?'s':''}…`,1);
-  try{return !!await act(async()=>{await txn(({root})=>{ps.forEach(p=>root.del.push(p.tag))});await reload(true);return true})}finally{busy.end()}}
+  try{return !!await act(async()=>{await txn(async({root,old,albIds,saveAlb})=>{const T=new Set(ps.map(p=>p.tag));
+      for(const mo of new Set(ps.map(monthOf))){const m=await monthMap(root,mo);T.forEach(t=>m.delete(t));await putMonth(root,mo,[...m.values()],old)}
+      for(const id of Object.keys(root.albums)){if(!root.albums[id].s)continue;const c=await albIds(id),k=c.filter(t=>!T.has(t));if(k.length!==c.length)await saveAlb(id,k)}});await reload(true);return true})}finally{busy.end()}}
 
 /* ---- view: days render lazily, sized to the page ---- */
 const curAlbum=()=>view!=='all'&&ROOT&&ROOT.albums[view];
@@ -710,14 +765,24 @@ const PAL=['#FF6B6B','#FFB020','#22C55E','#06B6D4','#8B5CF6','#EC4899'];
 const albIcon=id=>{let h=0;for(const ch of id)h=(h*31+ch.charCodeAt(0))>>>0;const c=PAL[h%PAL.length];
   return `<svg viewBox="0 0 32 32" width="34" height="34"><rect x="6" y="2" width="22" height="20" rx="3" fill="${c}" opacity=".35"/><rect x="2" y="7" width="24" height="22" rx="4" fill="${c}"/><circle cx="19" cy="14" r="2.5" fill="#fff" opacity=".9"/><path d="M2 24l7-6 5 4 4-3 8 6a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z" fill="#fff" opacity=".85"/></svg>`};
 function dayPx(n){const w=($('main').clientWidth||640)-60,cols=Math.max(1,Math.floor((w+6)/156)),t=(w-(cols-1)*6)/cols;return 54+Math.ceil(n/cols)*(t+6)}
-function dayGroups(){const src=view==='all'?ALL:ALL.filter(p=>ALB[view]&&ALB[view].has(p.tag)),g=[];let c=null;
+function dayGroups(){const src=view==='all'?ALL:ALL.filter(p=>ALBT[view]&&ALBT[view].has(p.tag)),g=[];let c=null;
   for(const p of src){const k=dk(p.m.d);if(!c||c.k!==k){c={k,es:[]};g.push(c)}c.es.push(p)}return g}
-function build(keep){
+let btok=0,nudging=0;
+const albFound=()=>{let n=0;ALBT[view]&&ALBT[view].forEach(t=>ENT.has(t)&&n++);return n};
+const visCount=()=>view==='all'?ALL.length:albFound();
+const needMore=()=>MLOAD<MONTHS.length&&(view==='all'||(!!ALBT[view]&&albFound()<ALBT[view].size));
+async function ensureEnough(t){for(let g=0;needMore()&&visCount()<t&&g<5000;g++)await loadMonth()}
+async function fillAlbum(){const a=view!=='all'&&ROOT.albums[view];if(a&&!ALBT[view]){const v=view,st=new Set(a.s?await getAlb(a.s):[]);ALBT[v]=st}}
+async function build(keep){
   if(space==="drive")return buildDrive(keep);
+  const tk=++btok;
   $("sp-p").setAttribute("aria-selected",true);$("sp-d").setAttribute("aria-selected",false);
-  const st=det.scrollTop;list=[];shown=0;usedPx=0;
   if(view!=='all'&&!ROOT.albums[view])view='all';
-  days=dayGroups();renderChrome();$('main').innerHTML='';
+  const st=det.scrollTop,prev=list.length;renderChrome();
+  if((view==='all'&&!MLOAD&&MONTHS.length)||(view!=='all'&&!ALBT[view]))$('main').innerHTML='<div class="empty">Loading&hellip;</div>';
+  try{await fillAlbum();await ensureEnough(Math.max(80,keep?prev:0))}catch(e){if(tk===btok)toast('Could not load photos',6000);return}
+  if(tk!==btok||space!=='photos')return;
+  list=[];shown=0;usedPx=0;days=dayGroups();$('main').innerHTML='';
   if(!days.length){$('main').innerHTML=view==='all'?'<div class="empty"><b>No photos yet</b>Press Upload or drop image files anywhere on this page.</div>':'<div class="empty"><b>This album is empty</b>Open All photos, choose Select, pick photos, then Add to album. Photos uploaded while this album is open are added to it.</div>';return}
   more(keep?st+det.clientHeight*1.5:det.clientHeight);if(keep)det.scrollTop=st}
 function more(target){while(shown<days.length&&usedPx<target){const d=days[shown++];fillSection(mkSection(d),d);usedPx+=dayPx(d.es.length)}}
@@ -734,15 +799,23 @@ function fillSection(g,d){
     c.oncontextmenu=e=>{e.preventDefault();toggleSel(p.tag)};
     g.append(c);io.observe(im)})}
 /* more days only once the user starts scrolling (scroll / wheel / touch) and gets near the end */
-const nudge=()=>{if(!ROOT||space!=='photos'||shown>=days.length)return;if(det.scrollHeight-det.scrollTop-det.clientHeight<det.clientHeight*1.2)more(usedPx+det.clientHeight)};
+async function nudge(){if(!ROOT||space!=='photos'||nudging)return;nudging=1;const tk=btok;
+  try{for(;;){if(tk!==btok||space!=='photos')return;
+    if(det.scrollHeight-det.scrollTop-det.clientHeight>=det.clientHeight*1.2)return;
+    if(shown<days.length){more(usedPx+det.clientHeight);continue}
+    if(!needMore())return;
+    const last=shown?days[shown-1].es.length:0;await loadMonth();if(tk!==btok)return;days=dayGroups();
+    if(shown&&days[shown-1].es.length!==last){nudging=0;await build(true);return}}}
+  catch{toast('Could not load more photos',6000)}finally{nudging=0}}
+/* more days render, and older months are fetched, only once the user scrolls (scroll / wheel / touch) near the end */
 ['scroll','wheel','touchmove'].forEach(t=>det.addEventListener(t,nudge,{passive:true}));
 async function setView(v){view=v;sel.clear();selMode=false;anchor=null;await build()}
 
 function renderChrome(){
   const al=Object.entries(ROOT.albums).map(([id,a])=>({id,...a})).sort((x,y)=>x.n.localeCompare(y.n));
-  const total=ALL.length,a=curAlbum(),cnt=a?(ALB[view]?ALB[view].size:0):total;
+  const total=ROOT.segs.reduce((n,s)=>n+s.n,0),a=curAlbum(),cnt=a?(a.k||0):total;
   $('st').textContent='';
-  const items=[{id:'all',n:'All photos',c:total,i:iconAll},...al.map(x=>({id:x.id,n:x.n,c:(ALB[x.id]?ALB[x.id].size:0),i:albIcon(x.id)}))];
+  const items=[{id:'all',n:'All photos',c:total,i:iconAll},...al.map(x=>({id:x.id,n:x.n,c:(x.k||0),i:albIcon(x.id)}))];
   const f=i=>`<button class="m-item" data-id="${i.id}" aria-current="${i.id===view}"><div style="min-width:0"><div class="n">${esc(i.n)}</div><div class="s">${i.c} photo${i.c==1?'':'s'}</div></div></button>`;
   $('list').innerHTML='<div class="grp">Library</div>'+f(items[0])+'<div class="grp"><span>Albums</span><button id="bnew" type="button" aria-label="New album" title="New album"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg></button></div>'+items.slice(1).map(f).join('');
   $('bnew').onclick=newAlbum;
@@ -828,7 +901,8 @@ async function uploadBatch(files,album,onFile,onPhase,onPart){
   const pack=new Uint8Array(off);let o=0;parts.forEach(b=>{pack.set(b,o);o+=b.length});
   await putAsset(rel.id,'tp',pack,tag);PACK.set(tag+'/tp',Promise.resolve(pack.buffer));
   const ref=await putAsset(rel.id,'ix',await packB(ok),tag);SEGC.set(key(ref),Promise.resolve(ok));
-  await txn(async({root,albIds,saveAlb})=>{root.segs.push({...ref,n:ok.length});
+  const cnt=new Map();ok.forEach(e=>{const k=monthOf(e);cnt.set(k,(cnt.get(k)||0)+1);NEEDMO.add(k)});
+  await txn(async({root,albIds,saveAlb,touchM})=>{cnt.forEach((n,mo)=>{root.segs.push({...ref,n,mo});touchM(mo)});
     if(album&&root.albums[album])await saveAlb(album,[...await albIds(album),...ok.map(e=>e.tag)])});
   onPhase(0)}
 async function uploadAll(files){
@@ -877,7 +951,10 @@ addEventListener('keydown',e=>{if(!$('lb').classList.contains('on')||e.target.ta
   if(e.key=='Escape')closeLb();if(e.key=='ArrowLeft')show(cur-1);if(e.key=='ArrowRight')show(cur+1)});
 $('sv').onclick=async()=>{const p=list[cur],d=new Date($('dt').value).getTime();if(isNaN(d))return;
   const b=$('sv');b.textContent='Saving…';
-  await act(async()=>{await txn(({addSeg})=>addSeg([{...slim(p),m:{...p.m,d}}]));closeLb();toast('Date updated');await reload(true)});
+  await act(async()=>{const ne={...slim(p),m:{...p.m,d}};NEEDMO.add(monthOf(ne));
+    await txn(async({root,old,addSeg})=>{const a=monthOf(p),m=await monthMap(root,a);
+      if(a===monthOf(ne)){m.set(p.tag,ne);await putMonth(root,a,[...m.values()],old)}
+      else{m.delete(p.tag);await putMonth(root,a,[...m.values()],old);await addSeg([ne])}});closeLb();toast('Date updated');await reload(true)});
   b.textContent='Save date'};
 $('la').onclick=()=>addToAlbum([list[cur]]);
 $('lr').onclick=async()=>{const p=list[cur];await removeFromAlbum([p]);closeLb()};
@@ -984,14 +1061,21 @@ const newFolder=async()=>{const n=await askName('New folder');if(!n)return;await
 async function renameItem(id){const f=id[0]==='f',e=f?null:DENT.get(id),n=await askName('Rename',f?ROOT.dfold[id].n:e.m.n);if(!n)return;
   await act(async()=>{await txn(({root,addDSeg})=>f?(root.dfold[id]&&(root.dfold[id].n=n)):addDSeg([{...e,m:{...e.m,n}}]));await reload(true)})}
 async function moveItems(ids){const fol=ids.filter(i=>i[0]==='f'),c=await askMove(descOf(fol,ROOT.dfold));if(!c)return false;
-  return !!await act(async()=>{const es=ids.filter(i=>i[0]==='d'&&DENT.has(i)).map(i=>DENT.get(i));
-    await txn(async({root,addDSeg})=>{fol.forEach(i=>{if(root.dfold[i])root.dfold[i].p=c.p});if(es.length)await addDSeg(es.map(e=>({...e,m:{...e.m,p:c.p}})))});
+  return !!await act(async()=>{const src=dcur,tags=ids.filter(i=>i[0]==='d'&&DENT.has(i));
+    await txn(async({root,addDSeg,old})=>{fol.forEach(i=>{if(root.dfold[i])root.dfold[i].p=c.p});
+      if(tags.length&&c.p!==src){const m=await folderMap(root,src),mv=tags.filter(t=>m.has(t)).map(t=>m.get(t));
+        if(mv.length){mv.forEach(e=>m.delete(e.tag));await putFolder(root,src,[...m.values()],old);await addDSeg(mv.map(e=>({...e,m:{...e.m,p:c.p}})))}}});
     toast('Moved');await reload(true);return true})}
 async function delDrive(ids,after){
-  const fol=ids.filter(i=>i[0]==='f'),ds=descOf(fol,ROOT.dfold),gone=DALL.filter(e=>ids.includes(e.tag)||ds.has(e.m.p));
-  if(!await askConfirm(`Delete ${ids.length} item${ids.length>1?'s':''}?`,`${gone.length} file${gone.length==1?'':'s'} will be removed from your drive. The encrypted chunks stay in your repo, unreferenced. Folders are deleted with everything inside them.`,'Delete'))return false;
+  const fol=ids.filter(i=>i[0]==='f'),ds=descOf(fol,ROOT.dfold),fl=ids.filter(i=>i[0]==='d'&&DENT.has(i)).map(i=>DENT.get(i)),
+    est=ROOT.dsegs.reduce((a,s)=>a+(ds.has(s.f)?s.n:0),0),nf=fl.length+est;
+  if(!await askConfirm(`Delete ${ids.length} item${ids.length>1?'s':''}?`,`${est?'Up to ':''}${nf} file${nf==1?'':'s'} will be removed from your drive. The encrypted chunks stay in your repo, unreferenced. Folders are deleted with everything inside them.`,'Delete'))return false;
   busy.start('Deleting…',1);
-  try{return !!await act(async()=>{await txn(({root})=>{ds.forEach(id=>delete root.dfold[id]);gone.forEach(e=>root.ddel.push(e.tag))});
+  try{return !!await act(async()=>{await txn(async({root,old})=>{
+      ds.forEach(id=>delete root.dfold[id]);
+      root.dsegs.filter(s=>ds.has(s.f)).forEach(s=>{if(s.r==='idx2'&&s.id)old.push(s.id)});root.dsegs=root.dsegs.filter(s=>!ds.has(s.f));
+      for(const p of new Set(fl.map(e=>e.m.p||''))){if(ds.has(p))continue;
+        const m=await folderMap(root,p);fl.forEach(e=>{if((e.m.p||'')===p)m.delete(e.tag)});await putFolder(root,p,[...m.values()],old)}});
     if(after!=null)dcur=after;dsel.clear();await reload();return true})}finally{busy.end()}}
 
 /* ---- view ---- */
@@ -1000,25 +1084,32 @@ function askGate(){return new Promise(res=>{const d=$('d-gate');$('g-p').value='
   const done=v=>{if(o)return;o=true;d.close();res(v)};$('g-c').onclick=()=>done(false);d.onclose=()=>done(false);
   $('f-gate').onsubmit=async e=>{e.preventDefault();if(hex(await sha($('g-p').value))===S.k)done(true);else{$('g-e').textContent='Wrong password';$('g-p').select()}};
   d.showModal();$('g-p').focus()})}
-async function setSpace(s){if(space===s)return;if(s==='photos'&&!photosOk){if(!await askGate())return;photosOk=true}space=s;sel.clear();selMode=false;anchor=null;dsel.clear();closeLb();view='all';dcur='';document.body.classList.remove('nav-open');await build()}
+async function setSpace(s){if(space===s)return;if(s==='photos'&&!photosOk){if(!await askGate())return;photosOk=true}
+  if(s==='photos'&&!PHOK){try{await organisePhotos();resetPhotos(ROOT);PHOK=true}catch(e){toast('Could not load photos',6000);return}}
+  space=s;sel.clear();selMode=false;anchor=null;dsel.clear();closeLb();view='all';dcur='';document.body.classList.remove('nav-open');await build()}
 $('sp-p').onclick=()=>setSpace('photos');$('sp-d').onclick=()=>setSpace('drive');
-const setFolder=id=>{dcur=id;dsel.clear();build()};
+const setFolder=id=>{dcur=id;dsel.clear();return build()};
 const VI={grid:'<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',list:'<path d="M4 6h16M4 12h16M4 18h16"/>',compact:'<path d="M4 5h16M4 9h16M4 13h16M4 17h16M4 21h16"/>'},
   VT={grid:'Grid view',list:'List view',compact:'Compact view'};
 const VSW=()=>['list','compact','grid'].map(v=>`<button type="button" data-v="${v}" title="${VT[v]}" aria-label="${VT[v]}" aria-pressed="${dview===v}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square">${VI[v]}</svg></button>`).join('');
 let fitCr=null;
-function buildDrive(keep){
+async function buildDrive(keep){
   const st=det.scrollTop,lst=(document.querySelector('.dwrap .dlist')||{}).scrollTop||0;if(dcur&&!ROOT.dfold[dcur])dcur='';
+  const R=ROOT,f0=dcur;
+  if(R.dsegs.some(s=>s.f===f0&&!SEGC.has(key(s))))$('main').innerHTML='<div class="empty">Loading&hellip;</div>';
+  let fm;try{fm=await folderMap(R,f0)}
+  catch{if(f0===dcur&&space==='drive')$('main').innerHTML='<div class="empty"><b>Could not load this folder</b>Check your connection, then open the folder again.</div>';return}
+  if(f0!==dcur||space!=='drive')return;DENT=fm;
   $('sp-p').setAttribute('aria-selected',false);$('sp-d').setAttribute('aria-selected',true);$('st').textContent='';
   const F=ROOT.dfold,tree=[];
   const walk=(p,d,anc)=>{const kids=Object.entries(F).filter(([,x])=>x.p===p).sort((a,b)=>a[1].n.localeCompare(b[1].n));kids.forEach(([id,x],k)=>{const last=k===kids.length-1;tree.push({id,n:x.n,d,last,anc});walk(id,d+1,[...anc,!last])})};walk('',0,[]);
 const item=(id,n,s,d)=>`<button class="m-item" data-id="${id}" aria-current="${id===dcur}" style="padding-left:${10+d*16}px"><div style="min-width:0"><div class="n">${esc(n)}</div>${s?`<div class="s">${s}</div>`:''}</div></button>`;
   const fitem=t=>{let g='';for(let j=0;j<t.d;j++)g+=`<i class="g${t.anc[j]?' v':''}"></i>`;g+=`<i class="g c${t.last?' l':''}"></i>`;return `<button class="m-item tf" data-id="${t.id}" aria-current="${t.id===dcur}">${g}<div class="tn"><div class="n">${esc(t.n)}</div></div></button>`};
-  $('list').innerHTML='<div class="grp">Drive</div>'+item('','My Drive',`${DALL.length} file${DALL.length==1?'':'s'} · ${fmt(DALL.reduce((a,e)=>a+e.m.s,0))}`,0)+
+  $('list').innerHTML='<div class="grp">Drive</div>'+item('','My Drive','',0)+
     '<div class="grp"><span>Folders</span><button id="bnew" type="button" aria-label="New folder" title="New folder"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg></button></div>'+tree.map(fitem).join('');
   $('bnew').onclick=newFolder;$('list').querySelectorAll('.m-item').forEach(b=>b.onclick=()=>{document.body.classList.remove('nav-open');setFolder(b.dataset.id)});
   const fo=Object.entries(F).filter(([,x])=>x.p===dcur).map(([id,x])=>({dir:1,id,n:x.n,d:x.c,s:0})),
-    fi=DALL.filter(e=>e.m.p===dcur).map(e=>({dir:0,id:e.tag,e,n:e.m.n,d:e.m.d,s:e.m.s})),
+    fi=[...DENT.values()].map(e=>({dir:0,id:e.tag,e,n:e.m.n,d:e.m.d,s:e.m.s})),
     cmp=(a,b)=>(dsort.k==='n'?a.n.localeCompare(b.n,undefined,{numeric:true}):a[dsort.k]-b[dsort.k])*dsort.d,rows=[...fo.sort(cmp),...fi.sort(cmp)];
   DROWS=rows.map(r=>r.id);const path=fpath(dcur),cur=path[path.length-1];
   const CR=[{id:'',n:'My Drive'},...path],crumbsHtml=k=>(k>0?`<button class="crumb more" data-c="${CR[k-1].id}" type="button" title="${esc(CR.slice(0,k).map(c=>c.n).join(' / '))}">&hellip;</button><i class="sep">&rsaquo;</i>`:'')+CR.slice(k).map((c,i,a)=>`<button class="crumb${i===a.length-1?' cur':''}" data-c="${c.id}" type="button"${i===a.length-1?' aria-current="page"':''}>${esc(c.n)}</button>`).join('<i class="sep">&rsaquo;</i>');
