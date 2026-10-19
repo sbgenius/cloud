@@ -368,6 +368,10 @@ dialog input[type=text],dialog input[type=password],dialog select{font-size:15px
 /* ---- sidebar: current item is green text, no background ---- */
 #app #side .m-item[aria-current=true],#app #side .m-item[aria-current=true]:hover{background:none}
 #app #side .m-item[aria-current=true] .n{color:var(--accent)}
+/* ---- v6: confine the file list in its own scrollbox (header stays pinned above) ---- */
+#app .dwrap .dlist{max-height:calc(100vh - 290px);max-height:calc(100dvh - 290px);min-height:220px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+#app .dwrap.v-grid .dlist{padding:2px 2px 10px}
+@media(max-width:760px){#app .dwrap .dlist{max-height:calc(100dvh - 250px)}}
 </style></head><body>
 
 <div id="auth"><div class="auth-card">
@@ -988,7 +992,7 @@ const VI={grid:'<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',
 const VSW=()=>['list','compact','grid'].map(v=>`<button type="button" data-v="${v}" title="${VT[v]}" aria-label="${VT[v]}" aria-pressed="${dview===v}"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square">${VI[v]}</svg></button>`).join('');
 let fitCr=null;
 function buildDrive(keep){
-  const st=det.scrollTop;if(dcur&&!ROOT.dfold[dcur])dcur='';
+  const st=det.scrollTop,lst=(document.querySelector('.dwrap .dlist')||{}).scrollTop||0;if(dcur&&!ROOT.dfold[dcur])dcur='';
   $('sp-p').setAttribute('aria-selected',false);$('sp-d').setAttribute('aria-selected',true);$('st').textContent='';
   const F=ROOT.dfold,tree=[];
   const walk=(p,d,anc)=>{const kids=Object.entries(F).filter(([,x])=>x.p===p).sort((a,b)=>a[1].n.localeCompare(b[1].n));kids.forEach(([id,x],k)=>{const last=k===kids.length-1;tree.push({id,n:x.n,d,last,anc});walk(id,d+1,[...anc,!last])})};walk('',0,[]);
@@ -1023,7 +1027,7 @@ const item=(id,n,s,d)=>`<button class="m-item" data-id="${id}" aria-current="${i
     r.onclick=e=>{if(lpd){lpd=false;return}if(e.shiftKey&&danchor){e.preventDefault();rangeD(id);return}
       if(e.ctrlKey||e.metaKey||dsel.size){toggleD(id);return}
       if(id[0]==='f')setFolder(id);else openFile(DENT.get(id))}});
-  renderDBar();if(keep)det.scrollTop=st}
+  renderDBar();if(keep){det.scrollTop=st;const l=document.querySelector('.dwrap .dlist');if(l)l.scrollTop=lst}}
 function toggleD(id){dsel.has(id)?dsel.delete(id):dsel.add(id);danchor=dsel.size?id:null;syncD();renderDBar()}
 function rangeD(id){const a=DROWS.indexOf(danchor),b=DROWS.indexOf(id);if(a<0||b<0)return toggleD(id);for(let k=Math.min(a,b);k<=Math.max(a,b);k++)dsel.add(DROWS[k]);syncD();renderDBar()}
 const clearD=()=>{dsel.clear();danchor=null;syncD();renderDBar()};
