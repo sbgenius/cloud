@@ -214,8 +214,7 @@ dialog input:focus,dialog select:focus{border-color:var(--accent)}
 #app #ctx{position:fixed;z-index:60;min-width:200px;max-width:calc(100vw - 16px);border-radius:12px}
 #app #ctx .ctx-h{padding:6px 12px 8px;margin-bottom:4px;border-bottom:1px solid var(--line);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
 #app #ctx button:disabled{opacity:.4;cursor:default}#app #ctx button:disabled:hover{background:none}
-#navbtn{display:none}.kebab-wrap{position:relative}#km,#nmn{right:0;top:calc(100% + 4px)}
-#app .t:hover .ck{display:block}
+#navbtn{display:none}.kebab-wrap{position:relative}#km,#nmn,#pmn{right:0;top:calc(100% + 4px)}
 #app .m-item{grid-template-columns:minmax(0,1fr)}
 :root,#app,#lb,dialog,#busy,#toast{--font:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}
 #lb .bar{position:relative;flex-wrap:nowrap;justify-content:flex-start;gap:8px;border-bottom:1px solid var(--line)}
@@ -554,6 +553,43 @@ html:root[data-theme=dark] dialog#d-gate::backdrop{background:#1f1f1f}
 /* password fields are plain text inputs drawn as dots, so Google / browser password managers never offer to save, fill or generate anything */
 input[data-pw]{-webkit-text-security:disc;text-security:disc}
 input[data-pw]::-ms-reveal,input[data-pw]::-webkit-credentials-auto-fill-button,input[data-pw]::-webkit-contacts-auto-fill-button{display:none!important;visibility:hidden;pointer-events:none}
+
+/* ---- ui polish: full-size previews, marquee selection ---- */
+/* preview fills the same box the full-res photo will use, unblurred */
+#lb #stage{container-type:size}
+#lb #stage img#big{width:min(100cqw,calc(100cqh * var(--ar,1.5)));height:auto;aspect-ratio:var(--ar,1.5);max-width:100%;max-height:100%;object-fit:contain}
+#lb #stage img#big.bl{filter:none}
+
+/* drive marquee selection */
+#mq{position:fixed;z-index:45;pointer-events:none;background:color-mix(in srgb,var(--accent) 16%,transparent);border:1px solid var(--accent)}
+body.mq-on,body.mq-on *{user-select:none!important;-webkit-user-select:none!important;cursor:default!important}
+
+/* photo selection: no hover checkbox, no tick mark; a selected tile's box just turns green */
+#app .t .ck{font-size:0;color:transparent;line-height:0;overflow:hidden}
+#app .sm-on .t .ck,#app .t.sel .ck{display:block}
+#app .t.sel .ck{background:var(--accent);border-color:var(--accent)}
+
+/* switcher: higher up, wider, square corners */
+@media(min-width:761px){#app #side{padding-top:10px}}
+#app #side .spaces{margin:0 8px 12px;gap:0;padding:3px;border-radius:0!important}
+#app #side .spaces button{padding:11px 8px;border-radius:0!important}
+
+/* buttons: darker green, bold white text */
+#app #nbtn,#app #bup{background:#3dbd68;border-color:#31a85a;color:#fff;font-weight:700;height:34px!important;min-height:0!important;padding:0 18px!important;line-height:1!important}
+#app #nbtn:hover,#app #bup:hover{background:#4bcb77;border-color:#3dbd68}
+/* selected photos: outline only, no checkbox / inner box */
+#app .t .ck{display:none!important}
+
+/* selected photo: outline drawn on top so hover zoom never hides it */
+#app .t.sel{outline:none}
+#app .t.sel::after{content:"";position:absolute;inset:0;border:3px solid var(--accent);border-radius:inherit;pointer-events:none;z-index:3}
+/* no selection bar when photos are selected */
+#app #bar{display:none!important}
+
+/* photos sidebar: tighter spacing between album entries */
+#app #list .m-item:not(.tf){padding:4px 10px;margin-bottom:0}
+#app #list .m-item:not(.tf) .n{line-height:1.25}
+#app #list .m-item:not(.tf) .s{line-height:1.2;margin-top:0}
 </style></head><body>
 
 <div id="auth"><div class="auth-card">
@@ -931,7 +967,7 @@ async function build(keep){
   try{await fillAlbum();await ensureEnough(Math.max(80,keep?prev:0))}catch(e){if(tk===btok)toast('Could not load photos',6000);return}
   if(tk!==btok||space!=='photos')return;
   list=[];shown=0;usedPx=0;days=dayGroups();$('main').innerHTML='';
-  if(!days.length){$('main').innerHTML=view==='all'?'<div class="empty"><b>No photos yet</b>Press Upload or drop image files anywhere on this page.</div>':'<div class="empty"><b>This album is empty</b>Open All photos, choose Select, pick photos, then Add to album. Photos uploaded while this album is open are added to it.</div>';return}
+  if(!days.length){$('main').innerHTML=view==='all'?'<div class="empty"><b>No photos yet</b>Press New or drop image files anywhere on this page.</div>':'<div class="empty"><b>This album is empty</b>Open All photos, right-click photos, then choose Add to album. Photos uploaded while this album is open are added to it.</div>';return}
   more(keep?st+det.clientHeight*1.5:det.clientHeight);if(keep)det.scrollTop=st}
 function more(target){while(shown<days.length&&usedPx<target){const d=days[shown++];fillSection(mkSection(d),d);usedPx+=dayPx(d.es.length)}}
 function mkSection(d){const w=document.createElement('div'),h=document.createElement('h3'),g=document.createElement('div');
@@ -940,11 +976,15 @@ function mkSection(d){const w=document.createElement('div'),h=document.createEle
 function fillSection(g,d){
   d.es.forEach(p=>{const i=list.length;list.push(p);const c=document.createElement('div'),im=document.createElement('img');
     c.className='t'+(sel.has(p.tag)?' sel':'');c.dataset.tag=p.tag;im.p=p;im.alt='';c.innerHTML='<span class="ck">&#10003;</span>'+(isVid(p)?'<span class="vb">'+fdur(p.m.v)+'</span>':'');c.prepend(im);c.querySelector('.ck').onclick=e=>{e.stopPropagation();toggleSel(p.tag)};
+    let lp=0,lpd=false;
+    c.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse')return;lpd=false;clearTimeout(lp);const x=e.clientX,y=e.clientY;lp=setTimeout(()=>{lpd=true;navigator.vibrate&&navigator.vibrate(12);photoMenu(p.tag,x,y)},450)});
+    ['pointerup','pointercancel','pointerleave','pointermove'].forEach(t=>c.addEventListener(t,()=>clearTimeout(lp)));
     c.onclick=e=>{
+      if(lpd){lpd=false;return}
       if(e.shiftKey&&anchor){e.preventDefault();rangeSel(i);return}
       if(e.ctrlKey||e.metaKey||e.shiftKey||sel.size||selMode){toggleSel(p.tag);return}
       show(i)};
-    c.oncontextmenu=e=>{e.preventDefault();toggleSel(p.tag)};
+    c.oncontextmenu=e=>{e.preventDefault();if(lpd)return;photoMenu(p.tag,e.clientX,e.clientY)};
     g.append(c);io.observe(im)})}
 /* more days only once the user starts scrolling (scroll / wheel / touch) and gets near the end */
 async function nudge(){if(!ROOT||space!=='photos'||nudging)return;nudging=1;const tk=btok;
@@ -965,12 +1005,11 @@ function renderChrome(){
   $('st').textContent='';
   const items=[{id:'all',n:'All photos',c:total,i:iconAll},...al.map(x=>({id:x.id,n:x.n,c:(x.k||0),i:albIcon(x.id)}))];
   const f=i=>`<button class="m-item" data-id="${i.id}" aria-current="${i.id===view}"><div style="min-width:0"><div class="n">${esc(i.n)}</div><div class="s">${i.c} photo${i.c==1?'':'s'}</div></div></button>`;
-  $('list').innerHTML='<div class="grp">Library</div>'+f(items[0])+'<div class="grp"><span>Albums</span><button id="bnew" type="button" aria-label="New album" title="New album"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg></button></div>'+items.slice(1).map(f).join('');
-  $('bnew').onclick=newAlbum;
+  $('list').innerHTML='<div class="grp">Library</div>'+f(items[0])+items.slice(1).map(f).join('');
   $('list').querySelectorAll('.m-item').forEach(b=>b.onclick=()=>{document.body.classList.remove('nav-open');setView(b.dataset.id)});
-  $('head').innerHTML=`<div class="mach-head"><button class="btn" id="navbtn" type="button" aria-label="Open menu"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><div style="min-width:0"><h2>${esc(a?a.n:'All photos')}</h2><div class="sub">${cnt} photo${cnt==1?'':'s'}</div></div><span class="sp"></span><button class="btn" id="bsel" type="button">Select</button><button class="btn primary" id="bup" type="button">Upload</button>`+
+  $('head').innerHTML=`<div class="mach-head"><button class="btn" id="navbtn" type="button" aria-label="Open menu"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><div style="min-width:0"><h2>${esc(a?a.n:'All photos')}</h2><div class="sub">${cnt} photo${cnt==1?'':'s'}</div></div><span class="sp"></span><div class="kebab-wrap"><button class="btn primary" id="bup" type="button" aria-haspopup="menu">New</button><div class="pop hidden" id="pmn"><button id="pup" type="button">Upload photos</button><button id="pnal" type="button">New album</button></div></div>`+
   (a?`<div class="kebab-wrap"><button class="btn" id="kb" type="button" aria-label="Album options"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v.01M12 12v.01M12 19v.01" stroke-width="3"/></svg></button><div class="pop hidden" id="km"><button id="k-ren" type="button">Rename album</button><button class="d" id="k-del" type="button">Delete album</button></div></div>`:'')+'</div>';
-  $('navbtn').onclick=()=>document.body.classList.add('nav-open');$('bsel').onclick=()=>{selMode=true;renderBar()};$('bup').onclick=()=>canUp('photos')&&$('file').click();
+  $('navbtn').onclick=()=>document.body.classList.add('nav-open');$('bup').onclick=e=>{e.stopPropagation();closePops($('pmn'));$('pmn').classList.toggle('hidden')};$('pup').onclick=()=>{$('pmn').classList.add('hidden');canUp('photos')&&$('file').click()};$('pnal').onclick=()=>{$('pmn').classList.add('hidden');newAlbum()};
   if(a){
     $('kb').onclick=e=>{e.stopPropagation();closePops($('km'));$('km').classList.toggle('hidden')};
     $('k-ren').onclick=async()=>{const n=await askName('Rename album',a.n);if(!n)return;await act(async()=>{await txn(({root})=>{if(root.albums[view])root.albums[view].n=n});await reload(true)})};
@@ -991,12 +1030,9 @@ function renderBar(){
   const b=$('bar'),on=sel.size>0||selMode;document.body.classList.toggle('sm-on',on);
   b.classList.toggle('hidden',!on);if(!on)return;
   const n=sel.size,a=curAlbum(),picked=()=>list.filter(p=>sel.has(p.tag));
-  b.innerHTML=`<button class="btn sm" id="s-done" type="button" aria-label="Exit selection"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"/></svg></button><b>${n} selected</b><button class="btn sm" id="s-all" type="button">Select all loaded</button><span class="sel-hint">Shift+click selects a range</span><span class="sp"></span><button class="btn sm" id="s-add" ${n?'':'disabled'}>Add to album</button>${a?`<button class="btn sm" id="s-rm" ${n?'':'disabled'}>Remove from album</button>`:''}<button class="btn sm danger" id="s-del" ${n?'':'disabled'}>Delete</button>`;
+  b.innerHTML=`<button class="btn sm" id="s-done" type="button" aria-label="Exit selection"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M6 6l12 12M18 6L6 18"/></svg></button><b>${n} selected</b><button class="btn sm" id="s-all" type="button">Select all loaded</button><span class="sel-hint">Shift+click selects a range</span><span class="sp"></span>`;
   $('s-all').onclick=()=>{list.forEach(p=>sel.add(p.tag));syncSel();renderBar()};
   $('s-done').onclick=clearSel;
-  $('s-add').onclick=async()=>{if(await addToAlbum(picked()))clearSel()};
-  $('s-rm')&&($('s-rm').onclick=async()=>{await removeFromAlbum(picked());clearSel()});
-  $('s-del').onclick=async()=>{if(await deletePhotos(picked()))clearSel()};
 }
 addEventListener('keydown',async e=>{
   if(!(sel.size||selMode)||$('lb').classList.contains('on')||document.querySelector('dialog[open]')||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName))return;
@@ -1079,7 +1115,7 @@ async function loadVideo(p,prog){const n=p.m.c,parts=[];for(let k=0;k<n;k+=3){
 async function show(i){
   if(i<0||i>=list.length)return;cur=i;const p=list[i];$('lb').classList.add('on');$('dp').classList.add('hidden');stopV();
   $('nm').textContent=p.m.n;$('dt').value=local(p.m.d);$('lr').classList.toggle('hidden',!curAlbum());
-  const big=$('big');big.className='bl';big.src=await thumbUrl(p);$('spin').textContent=isVid(p)?'Loading video…':'Loading full resolution…';
+  const big=$('big');big.className='bl';big.style.setProperty('--ar',(p.m.w&&p.m.h)?(p.m.w/p.m.h):1.5);big.src=await thumbUrl(p);$('spin').textContent=isVid(p)?'Loading video…':'Loading full resolution…';
   try{
     if(isVid(p)){
       if(lastVid&&lastVid!==p&&lastVid.url){URL.revokeObjectURL(lastVid.url);lastVid.url=null}
@@ -1164,7 +1200,7 @@ const xf={n:0,items:[],min:false,note:'',_r:0,
     $('xf-o').style.width=(act.length?(bt?bd/bt*100:(ok+fail+can)/tot*100):100)+'%';
     clearTimeout(xf.hide);if(!act.length&&!fail&&!can&&!kinds.has('up'))xf.hide=setTimeout(xf.close,6000)},
   add(name,total,kind='up'){const l=$('xf-l'),P=$('xf');
-    if(!xf.items.some(i=>!i.over)){xf.close();xf.note=''}clearTimeout(xf.hide);
+    if(!xf.items.some(i=>!i.over)){xf.close();xf.note='';if(kind==='up'){xf.min=true;P.classList.add('min');$('xf-m').title='Expand'}}clearTimeout(xf.hide);
     const el=document.createElement('div');el.className='xr wait';
     el.innerHTML='<div class="xn"></div><button class="xa" type="button" title="Cancel" aria-label="Cancel">'+XI.x+'</button><div class="xs">Waiting…</div><div class="xb"><i></i></div>';
     el.firstChild.textContent=name;el.title=name;
@@ -1292,7 +1328,7 @@ async function delDrive(ids,after){
     if(after!=null)dcur=after;dsel.clear();await reload();return true})}finally{busy.end()}}
 
 /* ---- view ---- */
-let photosOk=false;
+let photosOk=true;
 function askGate(){return new Promise(res=>{const d=$('d-gate');$('g-p').value='';$('g-e').textContent='';let o=false;
   const done=v=>{if(o)return;o=true;d.close();res(v)};$('g-c').onclick=()=>done(false);d.onclose=()=>done(false);
   $('f-gate').onsubmit=async e=>{e.preventDefault();if(hex(await sha($('g-p').value))===S.k)done(true);else{$('g-e').textContent='Wrong password';$('g-p').select()}};
@@ -1318,7 +1354,7 @@ async function buildDrive(keep){
   const walk=(p,d,anc)=>{const kids=Object.entries(F).filter(([,x])=>x.p===p).sort((a,b)=>a[1].n.localeCompare(b[1].n));kids.forEach(([id,x],k)=>{const last=k===kids.length-1;tree.push({id,n:x.n,d,last,anc});walk(id,d+1,[...anc,!last])})};walk('',0,[]);
 const item=(id,n,s,d)=>`<button class="m-item" data-id="${id}" aria-current="${id===dcur}" style="padding-left:${10+d*16}px"><div style="min-width:0"><div class="n">${esc(n)}</div>${s?`<div class="s">${s}</div>`:''}</div></button>`;
   const fitem=t=>{let g='';for(let j=0;j<t.d;j++)g+=`<i class="g${t.anc[j]?' v':''}"></i>`;g+=`<i class="g c${t.last?' l':''}"></i>`;return `<button class="m-item tf" data-id="${t.id}" aria-current="${t.id===dcur}">${g}<div class="tn"><div class="n">${esc(t.n)}</div></div></button>`};
-  $('list').innerHTML='<div class="grp">Drive</div>'+item('','My Drive','',0)+
+  $('list').innerHTML=
     '<div class="grp"><span>Folders</span><button id="bnew" type="button" aria-label="New folder" title="New folder"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg></button></div>'+tree.map(fitem).join('');
   $('bnew').onclick=newFolder;$('list').querySelectorAll('.m-item').forEach(b=>b.onclick=()=>{document.body.classList.remove('nav-open');setFolder(b.dataset.id)});
   const fo=Object.entries(F).filter(([,x])=>x.p===dcur).map(([id,x])=>({dir:1,id,n:x.n,d:x.c,s:0})),
@@ -1442,4 +1478,64 @@ $('blo').onclick=async()=>{if(await askConfirm('Log out?','You will be signed ou
 /* browsers without text-security fall back to a real password field */
 (function(){const ok=window.CSS&&CSS.supports&&(CSS.supports('-webkit-text-security','disc')||CSS.supports('text-security','disc'));
   document.querySelectorAll('input[data-pw]').forEach(i=>{i.setAttribute('autocomplete',ok?'off':'new-password');i.removeAttribute('name');if(!ok)i.type='password'})})();
+
+/* ---- drive: drag a box to select (like Google Drive); click on empty space clears the selection ---- */
+(function(){
+  const det=document.getElementById('detail');let st=null,sup=false,raf=0;
+  const SKIP='button,input,select,textarea,a,#ctx,.pop,.dh,.crumbs,dialog';
+  const box=()=>{let b=document.getElementById('mq');if(!b){b=document.createElement('div');b.id='mq';document.body.append(b)}return b};
+  det.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.pointerType!=='mouse'||space!=='drive'||!ROOT)return;
+    const t=e.target;if(t.closest(SKIP)||t.closest('#head,#bar'))return;
+    const r=det.getBoundingClientRect();if(e.clientX>=r.left+det.clientWidth||e.clientY>=r.top+det.clientHeight)return;
+    st={x:e.clientX,y:e.clientY,sl:det.scrollLeft,stp:det.scrollTop,cx:e.clientX,cy:e.clientY,on:false,
+        base:(e.ctrlKey||e.metaKey||e.shiftKey)?new Set(dsel):new Set()}});
+  const rect=()=>{const r=det.getBoundingClientRect(),ax=st.x-(det.scrollLeft-st.sl),ay=st.y-(det.scrollTop-st.stp);
+    const x1=Math.max(r.left,Math.min(ax,st.cx)),x2=Math.min(r.left+det.clientWidth,Math.max(ax,st.cx)),
+          y1=Math.max(r.top,Math.min(ay,st.cy)),y2=Math.min(r.top+det.clientHeight,Math.max(ay,st.cy));return{x1,y1,x2,y2}};
+  const update=()=>{if(!st||!st.on)return;const q=rect(),b=box();
+    b.style.left=q.x1+'px';b.style.top=q.y1+'px';b.style.width=Math.max(0,q.x2-q.x1)+'px';b.style.height=Math.max(0,q.y2-q.y1)+'px';
+    const hit=new Set(st.base);
+    document.querySelectorAll('.dr').forEach(row=>{const c=row.getBoundingClientRect();
+      if(c.right>q.x1&&c.left<q.x2&&c.bottom>q.y1&&c.top<q.y2)hit.add(row.dataset.id)});
+    let ch=hit.size!==dsel.size;if(!ch)for(const i of hit)if(!dsel.has(i)){ch=true;break}
+    if(ch){dsel.clear();hit.forEach(i=>dsel.add(i));danchor=dsel.size?[...dsel].pop():null;syncD();renderDBar()}};
+  const tick=()=>{raf=0;if(!st||!st.on)return;const r=det.getBoundingClientRect(),m=40;let dy=0;
+    if(st.cy>r.bottom-m)dy=Math.min(24,(st.cy-(r.bottom-m))/2);else if(st.cy<r.top+m)dy=-Math.min(24,((r.top+m)-st.cy)/2);
+    if(dy){det.scrollTop+=dy;update();raf=requestAnimationFrame(tick)}};
+  addEventListener('pointermove',e=>{if(!st)return;st.cx=e.clientX;st.cy=e.clientY;
+    if(!st.on){if(Math.hypot(e.clientX-st.x,e.clientY-st.y)<5)return;st.on=true;document.body.classList.add('mq-on');closeCtx();
+      if(!st.base.size&&dsel.size){dsel.clear();syncD()}}
+    update();if(!raf)raf=requestAnimationFrame(tick)});
+  const end=()=>{if(!st)return;const was=st.on;st=null;cancelAnimationFrame(raf);raf=0;
+    const b=document.getElementById('mq');if(b)b.remove();document.body.classList.remove('mq-on');
+    if(was){sup=true;setTimeout(()=>sup=false,0);renderDBar()}};
+  addEventListener('pointerup',end);addEventListener('pointercancel',end);
+  /* swallow the click that follows a drag so rows don't toggle */
+  addEventListener('click',e=>{if(sup){sup=false;e.stopImmediatePropagation();e.preventDefault()}},true);
+  /* single click on empty space unselects everything */
+  addEventListener('click',e=>{if(space!=='drive'||!dsel.size||e.button!==0)return;
+    const t=e.target;if(!t||!t.closest||t.closest('.dr,#ctx,.pop,dialog,button,input,select,a,.dh,#dv,#lb,#xf,#set,#toast,#busy'))return;
+    if(!t.closest('#app'))return;clearD()});
+})();
+/* photos: right-click (or touch long-press) menu with the selection actions */
+function photoMenu(tag,x,y){
+  if(!sel.has(tag)){sel.clear();sel.add(tag);anchor=tag;syncSel();renderBar()}
+  closeCtx();const n=sel.size,a=curAlbum(),picked=()=>list.filter(p=>sel.has(p.tag));
+  const m=document.createElement('div');m.id='ctx';m.className='pop';m.setAttribute('role','menu');
+  m.innerHTML=`<div class="ctx-h">${n} selected</div><button type="button" data-a="add">Add to album</button>${a?'<button type="button" data-a="rm">Remove from album</button>':''}<hr><button type="button" data-a="all">Select all loaded</button><button type="button" data-a="clr">Clear selection</button><hr><button type="button" class="d" data-a="del">Delete</button>`;
+  $('app').append(m);m._t=Date.now();
+  const w=m.offsetWidth,h=m.offsetHeight;m.style.left=Math.max(8,Math.min(x,innerWidth-w-8))+'px';m.style.top=Math.max(8,Math.min(y,innerHeight-h-8))+'px';
+  m.addEventListener('click',e=>e.stopPropagation());m.addEventListener('contextmenu',e=>e.preventDefault());
+  m.querySelectorAll('button').forEach(bt=>bt.onclick=async()=>{const k=bt.dataset.a;closeCtx();
+    if(k==='add'){if(await addToAlbum(picked()))clearSel()}
+    else if(k==='rm'){await removeFromAlbum(picked());clearSel()}
+    else if(k==='del'){if(await deletePhotos(picked()))clearSel()}
+    else if(k==='all'){list.forEach(p=>sel.add(p.tag));syncSel();renderBar()}
+    else if(k==='clr')clearSel()})}
+
+/* photos: a left click anywhere outside a photo / menu clears the selection */
+addEventListener('click',e=>{if(space!=='photos'||!sel.size||e.button!==0)return;
+  const t=e.target;if(!t||!t.closest||t.closest('.t,#ctx,.pop,dialog,button,input,select,a,#lb,#xf,#set,#toast,#busy,#dv'))return;
+  if(!t.closest('#app'))return;clearSel()});
 </script></body></html>
