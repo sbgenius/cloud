@@ -590,6 +590,14 @@ body.mq-on,body.mq-on *{user-select:none!important;-webkit-user-select:none!impo
 #app #list .m-item:not(.tf){padding:4px 10px;margin-bottom:0}
 #app #list .m-item:not(.tf) .n{line-height:1.25}
 #app #list .m-item:not(.tf) .s{line-height:1.2;margin-top:0}
+
+/* drive list: tighter gap under the path row, larger header + size/modified text */
+#app .mach-head:has(.crumbs){height:auto;padding:14px 30px 6px}
+#app .dwrap{margin-top:16px}
+#app .dwrap .dh{height:38px;font-size:14.5px;font-weight:700}
+#app .dwrap.v-compact .dh{height:34px}
+#app .dwrap .dr .ds,#app .dwrap .dr .dd{font-size:14.5px}
+@media(min-width:761px){#app .dwrap:not(.v-grid) .dh,#app .dwrap:not(.v-grid) .dr{grid-template-columns:minmax(0,1fr) 110px 160px 44px}}
 </style></head><body>
 
 <div id="auth"><div class="auth-card">
@@ -1355,8 +1363,8 @@ async function buildDrive(keep){
 const item=(id,n,s,d)=>`<button class="m-item" data-id="${id}" aria-current="${id===dcur}" style="padding-left:${10+d*16}px"><div style="min-width:0"><div class="n">${esc(n)}</div>${s?`<div class="s">${s}</div>`:''}</div></button>`;
   const fitem=t=>{let g='';for(let j=0;j<t.d;j++)g+=`<i class="g${t.anc[j]?' v':''}"></i>`;g+=`<i class="g c${t.last?' l':''}"></i>`;return `<button class="m-item tf" data-id="${t.id}" aria-current="${t.id===dcur}">${g}<div class="tn"><div class="n">${esc(t.n)}</div></div></button>`};
   $('list').innerHTML=
-    '<div class="grp"><span>Folders</span><button id="bnew" type="button" aria-label="New folder" title="New folder"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"><path d="M12 5v14M5 12h14"/></svg></button></div>'+tree.map(fitem).join('');
-  $('bnew').onclick=newFolder;$('list').querySelectorAll('.m-item').forEach(b=>b.onclick=()=>{document.body.classList.remove('nav-open');setFolder(b.dataset.id)});
+    '<div class="grp"><span>Folders</span></div>'+tree.map(fitem).join('');
+  $('list').querySelectorAll('.m-item').forEach(b=>b.onclick=()=>{document.body.classList.remove('nav-open');setFolder(b.dataset.id)});
   const fo=Object.entries(F).filter(([,x])=>x.p===dcur).map(([id,x])=>({dir:1,id,n:x.n,d:x.c,s:0})),
     fi=[...DENT.values()].map(e=>({dir:0,id:e.tag,e,n:e.m.n,d:e.m.d,s:e.m.s})),
     cmp=(a,b)=>(dsort.k==='n'?a.n.localeCompare(b.n,undefined,{numeric:true}):a[dsort.k]-b[dsort.k])*dsort.d,rows=[...fo.sort(cmp),...fi.sort(cmp)];
@@ -1369,7 +1377,7 @@ const item=(id,n,s,d)=>`<button class="m-item" data-id="${id}" aria-current="${i
   fitCr();if(!window.__crz){window.__crz=1;addEventListener('resize',()=>fitCr&&fitCr())}
   if(cur){$('kb').onclick=e=>{e.stopPropagation();closePops($('km'));$('km').classList.toggle('hidden')};$('k-ren').onclick=()=>renameItem(dcur);
     $('k-del').onclick=()=>delDrive([dcur],ROOT.dfold[dcur].p)}
-  const arrow=k=>dsort.k===k?(dsort.d>0?' ▲':' ▼'):'';
+  const arrow=k=>k==='n'?'':dsort.k===k?(dsort.d>0?' ▲':' ▼'):'';
   $('main').innerHTML=`<div class="dwrap v-${dview}"><div class="dh"><button data-k="n" type="button">Name${arrow('n')}</button><button data-k="s" type="button">Size${arrow('s')}</button><button data-k="d" type="button">Modified${arrow('d')}</button><span></span></div>`+
     (rows.length?'<div class="dlist">'+rows.map(r=>`<div class="dr${dsel.has(r.id)?' sel':''}" data-id="${r.id}"><span class="dn">${r.dir?icFolder(r.id):icFile(r.e)}<span>${esc(r.n)}</span></span><span class="ds">${r.dir?fmt(0):fmt(r.s)}</span><span class="dd">${r.d?new Date(r.d).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}):''}</span><span>${r.dir?'':'<button class="dl1" type="button" title="Download" aria-label="Download">'+icDl+'</button>'}</span></div>`).join('')+'</div>':
     '<div class="empty"><b>This folder is empty</b>Upload files, upload a folder, or drop files anywhere on this page. Large files are split into encrypted 24 MB chunks.</div>')+'</div>';
